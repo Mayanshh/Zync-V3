@@ -1,0 +1,53 @@
+/generated/prisma
+# --- IDE / OS Files ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# --- Dependencies ---
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# --- Build / Output ---
+dist/
+build/
+*.tsbuildinfo
+
+# --- Environment & Secrets ---
+# (CRITICAL: Never commit these to GitHub)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+
+# --- Prisma ---
+# Ignore the local SQLite DB if you use it for testing
+*.db
+*.db-journal
+# Prisma 7 sometimes generates local engine files
+query-engine-*
+migration_lock.toml
+
+# --- Logs ---
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Testing ---
+coverage/
+.nyc_output
+
+# --- Cache ---
+.cache/
+.npm/
+.eslintcache
