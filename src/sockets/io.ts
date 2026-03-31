@@ -3,53 +3,71 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import jwt from 'jsonwebtoken';
 import { redis } from '../db/redis.js';
 import { env } from '../config/env.js';
-import { handleChatEvents } from './handlers.js';
+import { activeWebSockets } from '../config/monitoring.js';
+import { setupHandlers } from './handlers.js';
+
+export let io: Server;
 
 export function initSockets(httpServer: any) {
-  const io = new Server(httpServer, {
+  io = new Server(httpServer, {
     cors: { 
-      origin: '*', // In production, replace with your Vercel frontend URL
+      origin: env.FRONTEND_URL || '*', 
       methods: ['GET', 'POST'] 
     },
-    transports: ['websocket'], // Force pure WebSockets for speed
-  });
-
-  // Scale horizontally: This broadcasts socket events across multiple server instances via Redis
-  const subClient = redis.duplicate();
-  io.adapter(createAdapter(redis, subClient));
-
-  // Authentication Middleware for WebSockets
-  io.use((socket, next) => {
-    try {
-      const token = socket.handshake.auth.token;
-      if (!token) {
-        return next(new Error('Authentication error: Token missing'));
-      }
-
-      // Verify JWT
-      const decoded = jwt.verify(token, env.JWT_SECRET) as { id: string; email: string };
-      
-      // Attach user data directly to the socket connection
-      socket.data.user = decoded;
-      next();
-    } catch (err) {
-      next(new Error('Authentication error: Invalid token'));
+    transports: ['websocket'], // Force pure WebSockets for lower latency
+    
+    // --- 1. RESILIENCE CONFIG ---
+    pingInterval: 25000, 
+    pingTimeout: 20000,
+    connectionStateRecovery: {
+      maxDisconnectionDuration: 2 * 60 * 1000, // Recover missed packets if disconnected < 2 mins
+      skipMiddlewares: true,
     }
   });
 
+  // --- 2. HORIZONTAL SCALING (Redis Adapter) ---
+  const subClient = redis.duplicate();
+  io.adapter(createAdapter(redis, subClient));
+
+  // --- 3. AUTHENTICATION MIDDLEWARE ---
+  io.use((socket, next) => {
+    try {
+      const token = socket.handshake.auth.token;
+      if (!token) return next(new Error('Auth error: Token missing'));
+
+      const decoded = jwt.verify(token, env.JWT_SECRET) as { id: string; email: string };
+      
+      // Attach user data to the socket object for use in handlers
+      socket.data.user = decoded;
+      next();
+    } catch (err) {
+      next(new Error('Auth error: Invalid token'));
+    }
+  });
+
+  // --- 4. CONNECTION LOGIC ---
   io.on('connection', (socket) => {
     const userId = socket.data.user.id;
-    console.log(`⚡ User connected to WebSocket: ${userId}`);
     
-    // Join a unique, private room based on their User ID.
-    // This makes routing direct messages incredibly easy.
+    // Increment Monitoring Gauge 📊
+    activeWebSockets.inc();
+    
+    console.log(`⚡ [Socket] User Connected: ${userId} (${socket.id})`);
+    
+    // Join a private room for targeted events (Direct Messages, Notifications)
     socket.join(`user_room_${userId}`);
 
-    // Register all the event listeners (Chat, Location, Drift)
-    handleChatEvents(io, socket);
+    // Heartbeat for frontend heartbeat tracking
+    socket.on('client_ping', () => {
+      socket.emit('server_pong', { timestamp: Date.now() });
+    });
+
+    // Register Handlers (Chat, Discovery, etc.)
+    setupHandlers(io, socket);
 
     socket.on('disconnect', () => {
-      console.log(`🔌 User disconnected: ${userId}`);
+      activeWebSockets.dec(); // Decrement Monitoring Gauge 📊
+      console.log(`🔌 [Socket] User Disconnected: ${userId}`);
     });
   });
 

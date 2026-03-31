@@ -1,33 +1,92 @@
-// // This is your Prisma schema file,
-// // learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// // Get a free hosted Postgres database in seconds: `npx create-db`
-
-// generator client {
-//   provider = "prisma-client"
-//   output   = "../generated/prisma"
-// }
-
-// datasource db {
-//   provider = "postgresql"
-// }
-
-//starts from here
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  // url      = env("DATABASE_URL")
 }
 
 model User {
-  id             String   @id @default(uuid())
-  email          String   @unique
-  displayName    String
-  bio            String?
-  spotifyGenres  String[]
-  driftMode      Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  id                String         @id @default(uuid())
+  email             String         @unique
+  password          String
+  displayName       String
+  bio               String?
+  avatarUrl         String?
+  interests         String[]
+  spotifyTopGenres  String[]
+  
+  // Spatial Data for Nearby Discovery
+  lat               Float?
+  lon               Float?
+  driftMode         Boolean        @default(false)
+  
+  // Relations
+  posts             Post[]
+  stories           Story[]
+  notifications     Notification[]
+  sentRequests      Connection[]   @relation("SentRequests")
+  receivedRequests  Connection[]   @relation("ReceivedRequests")
+  refreshTokens     RefreshToken[]
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([lat, lon]) // Geospatial lookup optimization
+}
+
+model Post {
+  id        String   @id @default(uuid())
+  content   String
+  imageUrl  String?
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([createdAt]) // For cursor pagination (feed scrolling)
+}
+
+model Story {
+  id        String   @id @default(uuid())
+  mediaUrl  String
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  expiresAt DateTime // Set to createdAt + 24h in logic
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt]) // For automatic cleanup/hiding
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String   // "CONNECTION_REQUEST", "MESSAGE", "SUGGESTION"
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Connection {
+  id          String   @id @default(uuid())
+  status      String   @default("PENDING") // PENDING, ACCEPTED, DECLINED
+  senderId    String
+  sender      User     @relation("SentRequests", fields: [senderId], references: [id])
+  receiverId  String
+  receiver    User     @relation("ReceivedRequests", fields: [receiverId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([senderId, receiverId]) // Prevents duplicate requests
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  revoked   Boolean  @default(false) // Security: allows manual logout/blocking
+  createdAt DateTime @default(now())
 }
