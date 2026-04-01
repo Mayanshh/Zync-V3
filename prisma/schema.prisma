@@ -21,6 +21,8 @@ model User {
   lon               Float?
   driftMode         Boolean        @default(false)
   
+  pushSubscription  Json?          // Stores the VAPID browser subscription object
+
   // Relations
   posts             Post[]
   stories           Story[]

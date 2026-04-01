@@ -12,6 +12,10 @@ const envSchema = z.object({
   CLOUDINARY_CLOUD_NAME: z.string(),
   CLOUDINARY_API_KEY: z.string(),
   CLOUDINARY_API_SECRET: z.string(),
+  VAPID_PUBLIC_KEY: z.string().min(10),
+  VAPID_PRIVATE_KEY: z.string().min(10),
+  VAPID_EMAIL: z.string().email(),
+  // ---------------------
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
 

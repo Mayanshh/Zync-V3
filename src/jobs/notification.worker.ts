@@ -1,15 +1,42 @@
 import { Worker } from 'bullmq';
 import { redis } from '../db/redis.js';
+import { prisma } from '../db/prisma.js';
 import { EmailService } from '../services/email/email.service.js';
+import { PresenceManager } from '../sockets/presence.js';
+import { PushService } from '../services/notifications/push.service.js';
+import { io } from '../sockets/io.js';
 
 export const notificationWorker = new Worker(
   'notifications',
   async (job) => {
     const { type, payload } = job.data;
 
-    console.log(`[BullMQ] 🏗️  Processing Job: ${job.id} | Type: ${type}`);
+    console.log(`[BullMQ] 🏗️ Processing Job: ${job.id} | Type: ${type}`);
 
     switch (type) {
+      case 'PUSH_NOTIFICATION': {
+        const { userId, title, body, data } = payload;
+        
+        // 1. Check if user is online
+        const socketId = await PresenceManager.isOnline(userId);
+
+        if (socketId) {
+          io.to(socketId).emit('notification', { title, body, ...data });
+        } else {
+          // 2. Fallback to Web Push
+          const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { pushSubscription: true }
+          });
+
+          // Casting to any because JSON types can be tricky in Prisma
+          if (user?.pushSubscription) {
+            await PushService.send(user.pushSubscription as any, title, body);
+          }
+        }
+        break;
+      }
+
       case 'CONNECTION_REQUEST_EMAIL':
         await EmailService.sendConnectionNotice(payload.email, payload.senderName);
         break;
@@ -18,28 +45,12 @@ export const notificationWorker = new Worker(
         await EmailService.sendWelcomeEmail(payload.email, payload.name);
         break;
 
-      case 'PUSH_NOTIFICATION':
-        // 📱 Future: Logic to emit via Socket.io or Firebase
-        console.log(`[BullMQ] 📱 Push notification triggered for: ${payload.userId}`);
-        break;
-
       default:
-        console.warn(`[BullMQ] ⚠️  Unknown job type: ${type}`);
+        console.warn(`[BullMQ] ⚠️ Unknown job type: ${type}`);
     }
   },
-  {
-    connection: redis,
-    concurrency: 5, // Process 5 emails/notifications in parallel
-    removeOnComplete: { count: 100 }, // Don't clog Redis with old success logs
-    removeOnFail: { count: 500 },    // Keep more failures for debugging
+  { 
+    connection: redis, 
+    concurrency: 5 
   }
 );
-
-// --- Event Listeners for better logging ---
-notificationWorker.on('completed', (job) => {
-  console.log(`✅ Job ${job.id} (Type: ${job.data.type}) finished successfully.`);
-});
-
-notificationWorker.on('failed', (job, err) => {
-  console.error(`❌ Job ${job?.id} failed: ${err.message}`);
-});

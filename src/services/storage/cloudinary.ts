@@ -1,7 +1,7 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { env } from '../../config/env.js';
+import sharp from 'sharp'; // Import sharp
 
-// 1. Cloudinary Configuration
 cloudinary.config({
   cloud_name: env.CLOUDINARY_CLOUD_NAME,
   api_key: env.CLOUDINARY_API_KEY,
@@ -9,35 +9,46 @@ cloudinary.config({
 });
 
 export class StorageService {
-  /**
-   * Uploads a file buffer directly to Cloudinary.
-   * resource_type: 'auto' handles both Images and Videos (Stories).
-   */
-  static async uploadBuffer(fileBuffer: Buffer, folder: string = 'zync_uploads'): Promise<string> {
+  static async uploadBuffer(
+    fileBuffer: Buffer, 
+    folder: string = 'zync_uploads',
+    mimetype: string // Added mimetype parameter
+  ): Promise<string> {
+    
+    let processedBuffer = fileBuffer;
+
+    // --- ULTRA EFFICIENT COMPRESSION FOR IMAGES ---
+    if (mimetype.startsWith('image/')) {
+      processedBuffer = await sharp(fileBuffer)
+        .resize({ width: 1920, withoutEnlargement: true }) // Keep it 1080p+ High Res
+        .avif({ quality: 60, effort: 6 }) // AVIF is ~30% better than WebP
+        .toBuffer();
+    }
+
     return new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        { 
-          folder, 
-          resource_type: 'auto',
-          fetch_format: 'auto', // Optimization: Serves WebP/Avif automatically
-          quality: 'auto'      // Optimization: Compresses without losing visual quality
-        },
-        (error, result) => {
-          if (error || !result) {
-            console.error('Cloudinary Upload Error:', error);
-            return reject(new Error('Failed to upload media to cloud storage.'));
-          }
-          resolve(result.secure_url);
-        }
-      );
-      
-      uploadStream.end(fileBuffer);
-    });
+  // 1. Build the options object dynamically
+  const uploadOptions: any = {
+    folder,
+    resource_type: 'auto',
+    // We only add the 'format' key if it's an image
+    ...(mimetype.startsWith('image/') ? { format: 'avif' } : {})
+  };
+
+  const uploadStream = cloudinary.uploader.upload_stream(
+    uploadOptions,
+    (error, result) => {
+      if (error || !result) {
+        console.error('Cloudinary Error:', error);
+        return reject(new Error('Upload failed.'));
+      }
+      resolve(result.secure_url);
+    }
+  );
+
+  uploadStream.end(processedBuffer);
+});
   }
 
-  /**
-   * Deletes a file from Cloudinary (Useful for expired stories)
-   */
   static async deleteFile(publicId: string): Promise<void> {
     try {
       await cloudinary.uploader.destroy(publicId);

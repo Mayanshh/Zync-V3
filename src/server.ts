@@ -5,6 +5,8 @@ import fastifyCookie from '@fastify/cookie';
 import fastifyMultipart from '@fastify/multipart';
 import fastifyRateLimit from '@fastify/rate-limit';
 import metricsPlugin from 'fastify-metrics';
+import fastifySwagger from '@fastify/swagger';
+import fastifySwaggerUi from '@fastify/swagger-ui';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 
 // 1. Background Jobs, Config & DB
@@ -35,8 +37,9 @@ import { initSockets } from './sockets/io.js';
 
 const app = Fastify({ 
   logger: true,
-  // Increase connection timeout for slow mobile networks
-  connectionTimeout: 30000 
+  // 20MB = 20 * 1024 * 1024 bytes
+  bodyLimit: 20971520,
+  connectionTimeout: 30000,
 });
 
 async function bootstrap() {
@@ -48,12 +51,37 @@ async function bootstrap() {
     // --- 2. GLOBAL ERROR CATCHER ---
     app.setErrorHandler(globalErrorHandler);
 
-    // --- 3. SECURITY & PLUGINS ---
+    // --- 3. SWAGGER SETUP (The "Brain" for AI Testing) ---
+    // This generates the documentation/json for Postman/Apidog
+    await app.register(fastifySwagger, {
+      openapi: {
+        info: {
+          title: 'Zync API Documentation',
+          description: 'MAANG-grade auto-generated docs for AI-driven testing',
+          version: '1.0.0',
+        },
+        components: {
+          securitySchemes: {
+            bearerAuth: {
+              type: 'http',
+              scheme: 'bearer',
+              bearerFormat: 'JWT',
+            },
+          },
+        },
+      },
+    });
+
+    await app.register(fastifySwaggerUi, {
+      routePrefix: '/documentation',
+    });
+
+    // --- 4. SECURITY & CORE PLUGINS ---
     await app.register(helmet);
     await app.register(cors, { origin: env.FRONTEND_URL || '*' }); 
     await app.register(fastifyCookie, { secret: env.JWT_SECRET });
 
-    // --- 4. DISTRIBUTED RATE LIMITING (Redis-backed) ---
+    // --- 5. DISTRIBUTED RATE LIMITING ---
     await app.register(fastifyRateLimit, {
       max: 100,
       timeWindow: '1 minute',
@@ -61,22 +89,22 @@ async function bootstrap() {
       keyGenerator: (req) => (req.headers['x-forwarded-for'] as string) || req.ip
     });
 
-    // --- 5. MULTIPART (File Uploads) ---
+    // --- 6. MULTIPART (File Uploads) ---
     await app.register(fastifyMultipart, {
       limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB strict limit
+        fileSize: 20971520,
         files: 1
       }
     });
 
-    // --- 6. MONITORING (Prometheus/Grafana) ---
+    // --- 7. MONITORING (Prometheus) ---
     await app.register(metricsPlugin as any, { 
       endpoint: '/metrics', 
       registry: register,
       defaultMetrics: { enabled: true }
     });
 
-    // --- 7. MODULE ROUTE REGISTRATION ---
+    // --- 8. MODULE ROUTE REGISTRATION ---
     await app.register(authRoutes, { prefix: '/api/v1/auth' });
     await app.register(userRoutes, { prefix: '/api/v1/users' });
     await app.register(geoRoutes, { prefix: '/api/v1/geo' });
@@ -84,18 +112,18 @@ async function bootstrap() {
     await app.register(postRoutes, { prefix: '/api/v1/posts' });
     await app.register(mediaRoutes, { prefix: '/api/v1/media' });
 
-    // --- 8. STORY & SEARCH ENDPOINTS ---
+    // --- 9. STORY & SEARCH ENDPOINTS ---
     app.post('/api/v1/stories', { preHandler: [authGuard] }, StoryController.createStory);
     app.get('/api/v1/stories/active', { preHandler: [authGuard] }, StoryController.getActiveStories);
     app.get('/api/v1/search', { preHandler: [authGuard] }, SearchController.globalSearch);
 
-    // --- 9. DISCOVERY (Spotify Similarity Suggestions) ---
+    // --- 10. DISCOVERY SUGGESTIONS ---
     app.get('/api/v1/users/suggestions', { preHandler: [authGuard] }, async (req, res) => {
       const suggestions = await UserService.getSuggestions(req.user.id);
       return res.send({ success: true, data: suggestions });
     });
 
-    // --- 10. HEALTH CHECK ---
+    // --- 11. HEALTH CHECK ---
     app.get('/health', async () => {
       return { 
         status: 'Zync Core Online', 
@@ -105,15 +133,15 @@ async function bootstrap() {
       };
     });
 
-    // --- 11. INITIALIZE SOCKETS & START SERVER ---
+    // --- 12. INITIALIZE SOCKETS & START SERVER ---
     initSockets(app.server);
 
     const port = Number(env.PORT) || 8080;
     await app.listen({ port, host: '0.0.0.0' });
     
-    console.log(`\n🚀 Zync Production Core Ready`);
-    console.log(`📊 Metrics: http://localhost:${port}/metrics`);
-    console.log(`🏥 Health: http://localhost:${port}/health`);
+    console.log(`\n Zync Infrastructure Ready`);
+    console.log(` Docs: http://localhost:${port}/documentation`);
+    console.log(` AI JSON: http://localhost:${port}/documentation/json \n`);
 
   } catch (err) {
     app.log.error(err);
